@@ -1,0 +1,879 @@
+---
+title: "RNA project_modeling"
+author: "Baosong Shi"
+date: '2024-07-15'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+####  2 GLM modeling
+
+## data preprocess
+
+```{r read data}
+
+rm(list=ls())
+setwd("C:/Users/hp/Desktop") 
+getwd() 
+
+
+samplesheet_data = read.csv(file='Gat201_samplesheet.csv',header=TRUE)  
+counts2_data = read.csv("counts2_all.csv",header = TRUE)
+mer2_data = read.csv("mer2_data_sub.csv",header=TRUE)
+mer3_data = read.csv("mer3_data_sub.csv",header=TRUE)
+mer4_data = read.csv("mer4_data_sub.csv",header=TRUE)
+mer5_data = read.csv("mer5_data_sub.csv",header=TRUE)
+```
+
+
+```{r get normalization offset }
+
+
+# normalize genes by the standard value
+counts2_data.copy = counts2_data
+counts2_data.copy[,7:ncol(counts2_data.copy)] = round(counts2_data.copy[,7:ncol(counts2_data.copy)]/apply(counts2_data[,7:ncol(counts2_data)],1,sd)*10)
+counts2_data.copy = counts2_data.copy[rowSums(counts2_data.copy==0)==0,]
+counts2_data = counts2_data.copy
+
+
+## get normalization offset ,we will put them in the glm.nb model
+
+offset_df = data.frame(Title=colnames(counts2_data)[7:62],
+                       offset=log(apply(counts2_data[7:62],2,median)))
+head(offset_df)
+
+# counts of time0 is not essentially smaller than time 30,120 and 240
+#  data of time0 is mainly used for exploratory analysis
+
+```
+
+## define functions to show model results
+
+
+```{r show evaluations and estimate results (coefficients, OR,LR tests, R2)}
+get_evaluations = function(nb_model){
+  
+  library(MASS)
+  
+  
+  ## check the significance of the whole model
+  nb_model.null = glm.nb(counts~ 1,
+                  data = nb_model$model,
+                  link=log)
+  
+  anova_table = anova(nb_model.null,nb_model, test = "Chisq") 
+  
+  
+  ## other evaluation indices
+  OR = exp(coef(nb_model))
+  r2 = round(cor(nb_model$fitted.values,nb_model$model$counts),3)
+  
+  # store the results
+  evaluation_results = list()
+
+  evaluation_results$OR = OR
+  evaluation_results$r2 = r2
+  evaluation_results$anova_table = anova_table
+  evaluation_results$anova_coefficients = anova(nb_model)
+  evaluation_results$theta = nb_model$theta
+  evaluation_results$SE.theta=nb_model$SE.theta
+  return(evaluation_results)
+  
+}
+
+r2 = function(nb_model, n_round=3){
+  return(round(cor(nb_model$fitted.values, nb_model$model$counts),n_round))
+}
+
+```
+
+
+```{r fitted plots of fitted values and counts}
+library(ggplot2)
+
+plot_fit_and_counts = function(nb_model,R2=NULL,x=5,y=30){
+
+  
+# df to be plotted
+pred = nb_model$fitted.values
+counts = nb_model$model$counts
+plot_df = data.frame(counts = counts,predictions = pred)
+
+
+## plot  #FF3030
+if(!is.null(R2)){
+       ggplot(data=plot_df)+
+       geom_point(mapping=aes(x=counts,y=predictions),size=3,colour = "#FF3030",alpha=0.2)+
+       geom_line(mapping=aes(x=counts,y=counts),colour="black")+
+       labs(title= "scatter plot of counts and its prediction",x="Counts", y="predictions")+
+       annotate("text", x=x,y=y,label=paste("R2  = ",R2,sep=""),hjust=0)+
+       annotate("text", x=x,y=(y+5),label=paste("AIC =",round(AIC(nb_model),2),sep=""),hjust=0)+
+       annotate("text", x=x,y=(y+10),label=paste("BIC = ",round(BIC(nb_model),2),sep=""),hjust=0)+
+       theme(plot.title = element_text(face = "bold",hjust=0.5))
+        # + theme_bw()
+}
+else{
+       ggplot(data=plot_df)+
+       geom_point(mapping=aes(x=counts,y=predictions),size=3,colour = "#FF3030",alpha=0.2)+
+       geom_line(mapping=aes(x=counts,y=counts),colour="black")+
+       labs(title= "",x="Counts", y="predictions")
+  
+}
+
+
+
+}
+
+```
+
+
+
+```{r plot confidence interval of covariats}
+
+
+
+
+library(ggplot2)
+
+confint_plot = function(nb_model,xlim=c(0.85,4.15),ylim=c(-2,1),ybreaks=seq(-2,1,0.25),angle=45){
+  
+# confidence level of covariates
+  
+n_covariates = length(coef(nb_model))-1 # no intercept
+
+confint_plot_df = data.frame(index = 1:n_covariates, 
+                             covariate = names(coef(nb_model))[2:(n_covariates+1)],
+                             estimate =coef(nb_model)[2:(n_covariates+1)],
+                             lower = confint(nb_model)[2:(n_covariates+1),1],
+                             upper = confint(nb_model)[2:(n_covariates+1),2]
+                             )
+
+
+ggplot(confint_plot_df,aes(x = index, y = estimate)) +
+  geom_line(colour="red")+
+  geom_hline(yintercept = 0,size=1,linetype="dashed",colour="red")+
+  geom_ribbon(aes(ymin=lower, ymax=upper, x=index), fill = "#FF3030", alpha = 0.3)+
+  scale_x_continuous(limits=xlim,breaks=confint_plot_df$index, labels = confint_plot_df$covariate)+
+  scale_y_continuous(limits=ylim,breaks=ybreaks)+
+theme(axis.text.x = element_text(angle = angle, hjust = 1))+
+  labs(title="95% Confident level of coefficient estimates",x="experimental factor")+
+  theme(plot.title = element_text( face="bold",hjust=0.5))
+# axis.title.x = element_text(color="blue", size=14, face="bold"),
+# axis.title.y = element_text(color="#993333", size=14, face="bold")
+  
+
+}
+
+# confint_plot(nb_model)
+```
+
+
+
+###  negative Binomial regression for one gene (for example)
+
+```{r transform data format}
+
+# transform the format of data for one gene
+
+gene_index= 1
+tmp_dd = as.data.frame(t(counts2_data[gene_index,7:62]))
+print(counts2_data$Geneid[gene_index])
+colnames(tmp_dd) = c("counts")
+tmp_dd$Title = rownames(tmp_dd)
+tmp_dd = merge(merge(tmp_dd,samplesheet_data,by="Title"),offset_df, by="Title")  #merge table
+head(tmp_dd)
+
+```
+
+
+```{r negative binomial regression}
+library(MASS)
+tmp_dd$GAT201 = as.factor(tmp_dd$GAT201)
+tmp_dd$Condition = as.factor(tmp_dd$Condition)
+tmp_dd$Time = as.factor(tmp_dd$Time)
+
+nb_model = glm.nb(counts~ Time*GAT201*Condition+
+                    offset(offset),
+                  data = tmp_dd[tmp_dd$Condition!="Y",],
+                  link=log
+                  )
+summary(nb_model)
+
+AIC(nb_model)
+BIC(nb_model)
+r2(nb_model)
+```
+```{r fitted plots}
+plot_fit_and_counts(nb_model,R2=0.936,x=2,y=35)
+```
+
+```{r  Confint plot}
+
+confint_plot(nb_model,xlim=c(0.85,11),ylim=c(-2,1.5),ybreaks=seq(-2,1.5,0.25),angle=15)
+
+```
+
+
+## negative Binomial modeling for all genes
+
+## human guided data preprocess
+
+```{r  define complement_motif functions}
+
+get_complement_motif <- function(motif){
+  
+  
+motif = strsplit(motif,'')[[1]]
+motif_c = c()
+  
+      for (i in 1:length(motif)){
+    
+         if (motif[i]=='A'){motif_c[i] = 'T'}
+         else if(motif[i]=='C'){motif_c[i] = 'G'}
+         else if(motif[i]=='G'){motif_c[i] = 'C'}
+         else if(motif[i]=='T'){motif_c[i] = 'A'}
+    
+                             }
+  
+  return(paste(rev(motif_c),collapse=''))   
+  
+}
+
+
+```
+
+
+
+```{r remove equivalent(complement) k-mer motifs}
+
+get_reduce_mers_data <- function(mer_data){ 
+
+
+# average the counts of motifs and complement motifs
+
+# remove these  equivalent(complement) k-mer motifs 
+
+
+mer_data.copy = mer_data
+mer_names =colnames(mer_data.copy)
+
+
+for (i in 1:length(mer_names)){
+  
+motif =  mer_names[i]
+current_mer_names = colnames(mer_data.copy)
+
+         if(motif %in% current_mer_names){
+   
+                motif_c =get_complement_motif(motif)
+ 
+                        if((motif_c!=motif)&(motif_c %in% current_mer_names )){
+                             mer_data.copy[,motif] = (mer_data.copy[,motif]+mer_data.copy[,motif_c])/2   #average the counts of motifs and complement motifs
+                              mer_data.copy = mer_data.copy[,!current_mer_names %in%c(motif_c) ]}
+                                                                  }
+
+                            }
+return(mer_data.copy)
+}
+
+mer2_data.reduced = get_reduce_mers_data(mer2_data)# 
+
+print(head(mer2_data))
+print(head(mer2_data.reduced))
+
+
+```
+
+
+```{r }
+mer3_data.reduced = get_reduce_mers_data(mer3_data)
+mer4_data.reduced = get_reduce_mers_data(mer4_data)
+mer5_data.reduced = get_reduce_mers_data(mer5_data)
+
+print(head(mer3_data))
+print(head(mer3_data.reduced))
+print(head(mer4_data))
+print(head(mer4_data.reduced))
+print(head(mer5_data))
+print(head(mer5_data.reduced))
+
+# when k is odd, there doesn't exist one motif that itself is also the complement motif
+# when k is even, there exists motifs satifying this condition
+```
+
+```{r combine the count frequencies}
+library(tidyr)
+## combine the count frequencies
+combine_mers = function(data, n_comb=2){
+  
+  colnames = colnames(data)[! colnames(data) %in% "Gene"]
+  
+  col_pairs_df = data.frame(matrix(colnames,ncol=n_comb))
+  cols_to_be_combined = colnames(col_pairs_df)
+
+  col_pairs_df = unite(col_pairs_df,"cols_comb",cols_to_be_combined,sep="_",remove=F)
+  
+   # print(col_pairs_df)
+   #   cols_comb X1 X2
+   # 1     AA-AG AA AG
+   # 2     CA-CG CA CG
+  
+  mat0 = matrix(0,nrow=nrow(data), ncol=nrow(col_pairs_df))
+  for (i in 1:nrow(col_pairs_df)){
+         col_pairs = unlist(col_pairs_df[i,2:ncol(col_pairs_df)])
+         # head(data[,col_pairs])
+         mat0[,i] = unlist(rowSums(data[,col_pairs]))
+         
+  }
+  
+  
+  data.comb = as.data.frame(mat0)
+  colnames(data.comb)=c(unlist(col_pairs_df$cols_comb))
+  data.comb$Gene = data$Gene
+  
+  
+  return(data.comb)
+}
+
+
+mer2_data.reduced.comb = combine_mers(mer2_data.reduced,2)
+mer3_data.reduced.comb = combine_mers(mer3_data.reduced,2)
+mer4_data.reduced.comb = combine_mers(mer4_data.reduced,4)
+mer5_data.reduced.comb = combine_mers(mer5_data.reduced,8)
+
+head(mer2_data.reduced.comb)
+head(mer3_data.reduced.comb)
+head(mer4_data.reduced.comb)
+head(mer5_data.reduced.comb)
+
+```
+
+
+
+
+```{r merge preprocessed data for modeling}
+
+
+get_modeling_data = function(n_genes=200,samplsheet_data=NULL,
+                             counts2_data=NULL,mer2_data=NULL,
+                             mer3_data=NULL,mer4_data=NULL,mer5_data=NULL){
+  
+library(tidyverse)
+    
+  
+  
+  
+# select genes for output "counts2_data"
+  
+colnames(counts2_data)[which(colnames(counts2_data)=="Geneid")]="Gene"
+
+set.seed(10)
+sample_index = sample(1:nrow(counts2_data),n_genes, replace=FALSE)
+counts2_data.genes = counts2_data[sample_index,]
+Gene = counts2_data.genes$Gene
+# head(counts2_data.genes)
+
+
+
+
+
+
+# prepare output data for merge
+
+condition_names= samplesheet_data$Title
+counts2_data.genes.table = counts2_data.genes %>% pivot_longer(condition_names,
+                                                             names_to = "Title",values_to="counts")
+counts2_data.genes.merge = merge(counts2_data.genes.table,samplesheet_data,by="Title")
+
+
+
+# select genes for k-mers data (k=2,3,4,5)
+
+mer2_data.genes = mer2_data[mer2_data$Gene %in% Gene,]
+mer3_data.genes = mer3_data[mer3_data$Gene %in% Gene,]
+mer4_data.genes = mer4_data[mer4_data$Gene %in% Gene,]
+mer5_data.genes = mer5_data[mer5_data$Gene %in% Gene,]
+
+# head(mer2_data.genes)
+  
+
+
+
+# merge k-mers data
+
+kmers_data_list.genes = list(mer2_data.genes,mer3_data.genes,mer4_data.genes,mer5_data.genes)
+
+kmers_data.genes.merge  = kmers_data_list.genes%>% reduce(inner_join,by="Gene")
+
+all_data.genes.merge = merge(counts2_data.genes.merge,
+                         kmers_data.genes.merge,by ="Gene")
+  
+
+
+
+  return(all_data.genes.merge)
+
+
+}
+
+```
+
+## glmm modeling(2,3,4,5 mers and stepwise results)
+
+
+
+```{r get merge data}
+
+
+# get merge data
+
+data.genes.merge = get_modeling_data(n_genes = 500,samplsheet_data = samplsheet_data,
+                                     counts2_data=counts2_data,
+                                     mer2_data =mer2_data.reduced,
+                                     mer3_data =mer3_data.reduced,
+                                     mer4_data =mer4_data.reduced.comb,
+                                     mer5_data =mer5_data.reduced.comb
+                                     )
+data.genes.merge = merge(data.genes.merge,offset_df, by="Title")
+data.genes.merge$Time = factor(data.genes.merge$Time)
+
+
+eliminate_cols = c("Title", "Gene","Chr","Start","End","Strand","Length","SampleID",
+                   "Group","Strain","Media","Timepoint","BioRep","offset","counts",
+                   "GAT201","Condition","Time")
+
+vars = colnames(data.genes.merge)[!colnames(data.genes.merge) %in% eliminate_cols]
+n=nrow(data.genes.merge[(data.genes.merge$Condition!="Y"),])
+```
+
+
+```{r remove datas }
+rm(mer2_data)
+rm(mer3_data)
+rm(mer4_data)
+rm(mer5_data)
+rm(mer2_data.reduced)
+rm(mer3_data.reduced)
+rm(mer4_data.reduced)
+rm(mer5_data.reduced)
+
+```
+
+
+```{r try on mixed effect model}
+# library(glmmTMB)
+# library(lme4)   
+# m1 = glmer.nb(counts~GAT201*Time*Condition+
+#                               (1|Gene),
+#            data=data.genes.merge[data.genes.merge$Condition!="Y",])
+# 
+# summary(m1)
+# cor(m1@resp$mu,data.genes.merge[data.genes.merge$Condition != "Y", "counts"])
+
+# library(lme4)
+# m2 = glm.nb(counts~GAT201*Time*Condition,
+#            data=data.genes.merge[data.genes.merge$Condition!="Y",])
+# anova(m1,m2)
+
+# m3 = glmer.nb(counts~GAT201*Time*Condition+AA+AC+AG+AT+
+#                               (1|Gene),
+#            data=data.genes.merge[data.genes.merge$Condition!="Y",])
+# 
+# summary(m3)
+```
+
+
+
+## 2 mers
+
+```{r  500 genes of 2mers}
+
+
+formular_str = paste0(c("counts~GAT201*Time*Condition+" ,
+                        paste0(vars[1:10],collapse="+"),
+                        "+offset(offset)"),collapse="")
+
+
+glm_nb_result = glm.nb(as.formula(formular_str),
+           data=data.genes.merge[(data.genes.merge$Condition!="Y"),])
+
+
+
+## print out results
+summary(glm_nb_result)
+AIC(glm_nb_result)
+BIC(glm_nb_result)
+r2(glm_nb_result,4)
+
+
+```
+
+
+```{r stepwise of 2 mers}
+stepwise2.1 = step(glm_nb_result,trace=0,direction ="backward",k=2)
+stepwise2.2 = step(glm_nb_result,trace=0,direction ="backward",k=log(n))
+stepwise2.3 = step(glm_nb_result,trace=0,direction ="backward",k=0)
+
+#
+nb_model_AIC=eval(stepwise2.1$call)
+nb_model_BIC=eval(stepwise2.2$call)
+nb_model_LL=eval(stepwise2.3$call)
+#
+print_summary_AIC_BIC_R2_LogLik = function(nb_model,nb_model_AIC,nb_model_BIC, nb_model_LL,n_round){
+
+print("summary of origin model, reduced model(AIC), reduced model(BIC), reduced model(LL):\n")
+print(summary(nb_model))
+print(summary(nb_model_AIC))
+print(summary(nb_model_BIC))
+print(summary(nb_model_LL))
+
+print("[AIC] of origin model, reduced model(AIC), reduced model(BIC), reduced model(LL)")
+print(AIC(nb_model))
+print(AIC(nb_model_AIC))
+print(AIC(nb_model_BIC))
+print(AIC(nb_model_LL))
+
+print("[BIC] of origin model, reduced model(AIC), reduced model(BIC), reduced model(LL)")
+print(BIC(nb_model))
+print(BIC(nb_model_AIC))
+print(BIC(nb_model_BIC))
+print(BIC(nb_model_LL))
+
+print("[logLik] of origin model, reduced model(AIC), reduced model(BIC), reduced model(LL)")
+print(logLik(nb_model))
+print(logLik(nb_model_AIC))
+print(logLik(nb_model_BIC))
+print(logLik(nb_model_LL))
+
+print("[r2] of origin model, reduced model(AIC), reduced model(BIC), reduced model(LL)")
+print(r2(nb_model,n_round))
+print(r2(nb_model_AIC,n_round))
+print(r2(nb_model_BIC,n_round))
+print(r2(nb_model_LL,n_round))
+
+}
+
+print_summary_AIC_BIC_R2_LogLik(glm_nb_result,nb_model_AIC,nb_model_BIC, nb_model_LL,4)
+# 
+# get_evaluations(nb_model_AIC)
+# get_evaluations(nb_model_BIC)
+
+
+```
+
+
+
+```{r residuals diagnostic plot of 2 mers}
+plot(glm_nb_result,pch=20,col="lightpink3")
+plot(nb_model_AIC,pch=20,col="lightpink3")
+
+```
+## 3 mers
+
+```{r 500 genes of 3mers }
+
+formular_str = paste0(c("counts~GAT201*Time*Condition+" ,
+                        paste0(vars[11:42],collapse="+"),
+                        "+offset(offset)"),collapse="")
+
+# formular_str = paste0(c("counts~GAT201+Condition+Time*(" ,
+#                         paste0(vars[11:42],collapse="+"),
+#                         ")+offset(offset)"),collapse="")
+
+
+glm_nb_result3 = glm.nb(as.formula(formular_str),
+           data=data.genes.merge[(data.genes.merge$Condition!="Y"),])
+
+
+
+
+## print out results
+summary(glm_nb_result3)
+AIC(glm_nb_result3)
+BIC(glm_nb_result3)
+r2(glm_nb_result3)
+# get_evaluations(glm_nb_result3)
+
+# plot_fit_and_counts(glm_nb_result3)
+# confint_plot(glm_nb_result3)
+
+```
+
+```{r stepwise of 3 mers}
+stepwise3.1 = step(glm_nb_result3,trace=0,direction ="backward",k=2)
+stepwise3.2 = step(glm_nb_result3,trace=0,direction ="backward",k=log(n))
+stepwise3.3 = step(glm_nb_result3,trace=0,direction ="backward",k=0)
+
+nb_model_AIC3=eval(stepwise3.1$call)
+nb_model_BIC3=eval(stepwise3.2$call)
+nb_model_LL3=eval(stepwise3.3$call)
+
+# get_evaluations(nb_model_AIC3)
+# get_evaluations(nb_model_BIC3)
+
+print_summary_AIC_BIC_R2_LogLik(glm_nb_result3,nb_model_AIC3,nb_model_BIC3, nb_model_LL3,4)
+```
+
+## 4 mers
+
+```{r 500 genes of 4mers}
+formular_str = paste0(c("counts~GAT201*Time*Condition+" ,
+                        paste0(vars[43:76],collapse="+"),
+                        "+offset(offset)"),collapse="")
+
+
+glm_nb_result4 = glm.nb(as.formula(formular_str),
+           data=data.genes.merge[(data.genes.merge$Condition!="Y"),])
+
+## print out results
+summary(glm_nb_result4)
+AIC(glm_nb_result4)
+BIC(glm_nb_result4)
+logLik(glm_nb_result4)
+r2(glm_nb_result4)
+# get_evaluations(glm_nb_result4)
+# plot_fit_and_counts(glm_nb_result4)
+# confint_plot(glm_nb_result)
+
+
+```
+
+
+```{r stepwise of 4 mers}
+stepwise4.1 = step(glm_nb_result4,trace=0,direction ="backward",k=2)
+stepwise4.2 = step(glm_nb_result4,trace=0,direction ="backward",k=log(n))
+stepwise4.3 = step(glm_nb_result4,trace=0,direction ="backward",k=0)
+
+nb_model_AIC4=eval(stepwise4.1$call)
+nb_model_BIC4=eval(stepwise4.2$call)
+nb_model_LL4=eval(stepwise4.3$call)
+
+# get_evaluations(nb_model_AIC4)
+# get_evaluations(nb_model_BIC4)
+
+print_summary_AIC_BIC_R2_LogLik(glm_nb_result4,nb_model_AIC4,nb_model_BIC4, nb_model_LL4,4)
+```
+## 5 mers
+
+```{r 500 genes of 5mers}
+
+formular_str = paste0(c("counts~GAT201*Time*Condition+" ,
+                        paste0(vars[77:140],collapse="+"),
+                        "+offset(offset)"),collapse="")
+
+
+glm_nb_result5 = glm.nb(as.formula(formular_str),
+           data=data.genes.merge[(data.genes.merge$Condition!="Y"),])
+
+
+## print out results
+summary(glm_nb_result5)
+AIC(glm_nb_result5)
+BIC(glm_nb_result5)
+logLik(glm_nb_result5)
+r2(glm_nb_result5)
+
+
+# get_evaluations(glm_nb_result5)
+# plot_fit_and_counts(glm_nb_result5)
+# confint_plot(glm_nb_result)
+
+
+
+
+```
+
+```{r stepwise of 5 mers}
+stepwise5.1 = step(glm_nb_result5,trace=0,direction ="backward",k=2)
+stepwise5.2 = step(glm_nb_result5,trace=0,direction ="backward",k=log(n))
+stepwise5.3 = step(glm_nb_result5,trace=0,direction ="backward",k=0)
+
+nb_model_AIC5=eval(stepwise5.1$call)
+nb_model_BIC5=eval(stepwise5.2$call)
+nb_model_LL5=eval(stepwise5.3$call)
+
+# get_evaluations(nb_model_AIC5)
+# get_evaluations(nb_model_BIC5)
+print_summary_AIC_BIC_R2_LogLik(glm_nb_result5,nb_model_AIC5,nb_model_BIC5, nb_model_LL5,4)
+```
+
+
+## lasso shrinkage method
+
+
+```{r  lasso method to remove redundant values}
+library(mpath)
+
+
+formular_str = paste0(c("counts~" ,
+                        paste0(vars[1:140],collapse="+"),
+                        "+offset(offset)"),collapse="")
+
+
+glm_nb_lasso_result = glmregNB(as.formula(formular_str),
+           data=data.genes.merge[(data.genes.merge$Condition=="Y"),],
+           lambda=seq(0.001, 1, by=0.01))
+
+```
+
+
+```{r lasso plots}
+plot(glm_nb_lasso_result, xvar="lambda", label=TRUE)
+
+```
+
+
+```{r fit the negative binomial regression model with lasso shrinkage again with a proper lambda}
+library(mpath)
+formular_str = paste0(c("counts~" ,
+                        paste0(vars[1:140],collapse="+"),
+                        "+offset(offset)"),collapse="")
+
+
+glm_nb_lasso_result2 = glmregNB(as.formula(formular_str),
+           data=data.genes.merge[(data.genes.merge$Condition=="Y"),],
+           lambda=exp(-4))
+l.coef=coef(glm_nb_lasso_result2)
+```
+
+
+```{r model using lasso results}
+whole_names = names(l.coef[which(l.coef!=0)])  #74
+mer2_lasso_names = whole_names[whole_names%in% vars[1:10]]
+mer3_lasso_names = whole_names[whole_names%in% vars[11:42]]
+mer4_lasso_names = whole_names[whole_names%in% vars[43:76]]
+mer5_lasso_names = whole_names[whole_names%in% vars[77:140]]
+
+
+
+mers_lasso = function(mer2_lasso_names){
+  formular_str = paste0(c("counts~GAT201*Time*Condition+" ,
+                        paste0(mer2_lasso_names,collapse="+"),
+                        "+offset(offset)"),collapse="")
+
+nb_lasso2=glm.nb(as.formula(formular_str),
+           data=data.genes.merge[(data.genes.merge$Condition!="Y"),])
+
+return(nb_lasso2)
+}
+
+# 
+# 
+nb_lasso2=mers_lasso(mer2_lasso_names)
+nb_lasso3=mers_lasso(mer3_lasso_names)
+nb_lasso4=mers_lasso(mer4_lasso_names)
+nb_lasso5=mers_lasso(mer5_lasso_names)
+
+
+summary(nb_lasso3)
+AIC(nb_lasso3)
+BIC(nb_lasso3)
+```
+
+
+
+```{r mer features left after lasso shrinkage procedure}
+mer2_lasso_names
+mer3_lasso_names
+mer4_lasso_names
+mer5_lasso_names
+```
+
+```{r summary of negative regression models under k-mers after lasso shrinkage}
+
+print_summary_AIC_BIC_R2_LogLik(nb_lasso2,nb_lasso3,nb_lasso4, nb_lasso5,4)
+```
+
+
+
+
+
+
+
+
+### model averaging 
+
+
+```{r correlation of fits under different mers}
+
+cor(cbind(nb_model_AIC$fitted.values,nb_model_AIC3$fitted.values,nb_model_AIC4$fitted.values,nb_model_AIC5$fitted.values))
+```
+
+
+```{r evaluate the average results}
+# evaluate the regression results
+
+MSE = function(fitted, counts){
+  return (round(mean((counts-fitted)^2),3))
+}
+
+RMSE = function(fitted, counts){
+  return (round(sqrt(mean((counts-fitted)^2)),3))
+}
+
+MAE = function(fitted, counts){
+  return (round(mean(abs(counts-fitted)),3))
+}
+
+r22 = function(fitted, counts){
+  return(round(cor(fitted, counts),3))
+}
+
+
+
+```
+
+
+
+
+```{r model averging}
+
+## using the AIC stepwise result to do model averaging
+
+model_average = function(glm_nb2,glm_nb3,glm_nb4,glm_nb5){
+
+
+AICs_weight = c(glm_nb2$aic,glm_nb3$aic,glm_nb4$aic,glm_nb5$aic)/sum(c(glm_nb2$aic,glm_nb3$aic,glm_nb4$aic,glm_nb5$aic))
+
+print(AICs_weight)
+fitted_final = cbind(glm_nb2$fitted.values,glm_nb3$fitted.values,glm_nb4$fitted.values,glm_nb5$fitted.values)%*%AICs_weight
+
+
+## return results
+counts = glm_nb2$model$counts
+eva_df = data.frame(
+  mer2 = c(MSE(glm_nb2$fitted.values,counts),RMSE(glm_nb2$fitted.values,counts),MAE(glm_nb2$fitted.values,counts),r22(glm_nb2$fitted.values,counts)),
+  mer3 = c(MSE(glm_nb3$fitted.values,counts),RMSE(glm_nb3$fitted.values,counts),MAE(glm_nb3$fitted.values,counts),r22(glm_nb3$fitted.values,counts)),
+  mer4 = c(MSE(glm_nb4$fitted.values,counts),RMSE(glm_nb4$fitted.values,counts),MAE(glm_nb4$fitted.values,counts),r22(glm_nb4$fitted.values,counts)),
+  mer5 = c(MSE(glm_nb5$fitted.values,counts),RMSE(glm_nb5$fitted.values,counts),MAE(glm_nb5$fitted.values,counts),r22(glm_nb5$fitted.values,counts)),
+  average = c(MSE(fitted_final,counts),RMSE(fitted_final,counts),MAE(fitted_final,counts),r22(fitted_final,counts))
+)
+eva_df=t(eva_df)
+colnames(eva_df) = c("MSE","RMSE","MAE","R2")
+return(eva_df)
+
+}
+
+```
+
+
+
+```{r   model averaging result using stepwise method}
+eva_df=model_average(glm_nb2=nb_model_AIC,
+                     glm_nb3=nb_model_AIC3,
+                     glm_nb4=nb_model_AIC4,
+                     glm_nb5=nb_model_AIC5)
+eva_df
+```
+
+
+```{r model averaging result using lasso shrinkage method}
+# 
+eva_df=model_average(glm_nb2=nb_lasso2,glm_nb3=nb_lasso3,glm_nb4=nb_lasso4,glm_nb5=nb_lasso5)
+eva_df
+```
+
