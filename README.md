@@ -1,5 +1,5 @@
 # How-does-DNA-sequence-specify-gene-expression-in-a-timecourse-of-fungal-growth
-*******Introduction of the project******
+******Introduction of the project******
 
 Given the output data contains gene expression counts for genes over 50 experiment samples,  and k-mer features, which describe a short sequence of nucleotides for each gene at the starting point, we program the codes to solve the following questions:
 
@@ -10,7 +10,7 @@ Thirdly, find a relatively small amount of motifs, which are useful to predict g
  
 
 
-*******Packages required******
+******Packages required******
 
 Tidyr/tidyverse:   we use this R package to change the data format(for example,merge several columns to one column) for plotting and modeling.
 ggplot2:  we use this R package to make a series of density plots, pca plot, clustering plot, residual diagnostic plot, confident level plot of coefficient estimates, fitted plot.
@@ -20,7 +20,8 @@ mpath:  we use the “glmregNB” function in this R package to fit a negative b
 
 
 
-*********The main structure of each code files********
+********The main structure of each code files********
+
 Running Sequence:
 ( the codes are run in order, You can also see the  structure through title of each R chunk)
 
