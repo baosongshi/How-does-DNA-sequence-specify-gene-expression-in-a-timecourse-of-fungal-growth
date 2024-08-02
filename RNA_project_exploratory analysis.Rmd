@@ -1,0 +1,338 @@
+---
+title: "RNA_project_exploratory_analysis"
+author: "Baosong Shi"
+date: '2024-07-10'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### read data
+
+```{r import data}
+
+## import csvs
+
+rm(list=ls()) # remove origin variables
+setwd("C:/Users/hp/Desktop") #set current working directory
+getwd() # get working directory
+
+
+# read data(5 csvs)
+samplesheet_data = read.csv(file='Gat201_samplesheet.csv',header=TRUE)  
+counts_data = read.csv(file='counts_all.csv',header=TRUE)
+mer2_data = read.csv(file='H99_all_genes_promoter_500nt_2mer_counts.csv',header=TRUE,skip=10) #skip comments
+mer3_data = read.csv(file='H99_all_genes_promoter_500nt_3mer_counts.csv',header=TRUE,skip=10)
+mer4_data = read.csv(file='H99_all_genes_promoter_500nt_4mer_counts.csv',header=TRUE,skip=10)
+mer5_data = read.csv(file='H99_all_genes_promoter_500nt_5mer_counts.csv',header=TRUE)
+
+```
+
+### exploratory analysis: normalization and other data preprocessing steps
+
+
+
+```{r  check missing values}
+# check if there is any missing values(NA) in data
+sum(is.na(counts_data))
+sum(is.na(mer2_data))
+sum(is.na(mer3_data))
+sum(is.na(mer4_data))
+sum(is.na(mer5_data))
+
+##there doesn't exist any missing value in these five files, thus it is no need to do imputation 
+```
+```{r  check counts}
+# check counts (choose negative binomial distribution or normal distribution?)
+sum(counts_data==0)   # the total number of zero_counts of all genes over all samples
+
+counts0_vec = rowSums(counts_data==0)      # sum the number of zero-counts over all samples in each gene 
+
+counts0_vec1 = counts0_vec[counts0_vec!=0] # genes that have zero-counts
+
+length(counts0_vec1)/dim(counts_data)[1]   # proportion of 4.7% genes have zero-counts
+
+```
+
+
+```{r zero-counts plot}
+
+# plot the histogram of zero-counts in 56 samples
+
+hist(counts0_vec1,col="lightblue", border="black",breaks = seq(1, 56, by = 1),
+     xlab='zero-counts(before gene screening)',xlim=c(1,60),
+     main='' ) 
+
+```
+
+```{r  gene screening}
+## select genes
+
+
+sum(counts0_vec1==56) # 12 genes 
+
+dim(counts_data)[1]
+
+counts_sub = counts_data[counts0_vec<=round(56*0.2),]
+
+dim(counts_sub)[1]   # We eliminate 135 "bag genes", finally, 6660 genes are left.
+```
+```{r zero-counts plot after gene screening}
+# plot the histogram of zero-counts(after gene screening) in 56 samples
+
+counts2_vec = rowSums(counts_sub==0)
+hist(counts2_vec[counts2_vec!=0],col="lightblue", border="black",breaks = seq(1, 12, by = 1),
+     xlab='zero-counts(before gene screening)',xlim=c(1,12),
+     main='' ) 
+```
+
+
+
+```{r  normalization (FPKM method)}
+
+counts = counts_sub[,7:ncol(counts_sub)]  # numerical colums
+
+
+
+## RPKM method ,which is commonly in RNA-seq statistical analysis
+counts1 = counts/counts_sub$Length   # for each gene, divided counts by length of this gene 
+
+counts1 = counts1/colSums(counts1) # divide this intermediate variable by total counts over all genes for each sample
+
+counts1 = counts1/rowSums(counts1) # divide this intermediate variable by total counts over all samples for each gene
+
+print(counts1[1:5,1:5]) #check normalized data
+
+```
+
+
+```{r  check the distribution of normalized counts  }
+summary(counts1[,1:5]) #check the distribution of normalized counts
+```
+
+```{r  normalization(decimals to integers)}
+## translate the normalized counts from decimals into integers
+
+max(counts1)  ##minimum counts
+
+min(counts1)  ## maximum counts
+
+sum(counts1<0.0001) #the number of decimal normalized counts which is smaller than 0.0001
+
+counts2  =round(counts1*1000) # multiple decimal normalized counts by 1000
+
+
+
+```
+
+```{r check the value range of counts before and after normalization}
+# check the value range of counts before and after normalization
+max(counts_data[7:ncol(counts_data)])
+max(counts2)
+```
+
+```{r shows the quantiles of counts before and after normalization}
+# shows the quantiles of counts before and after normalization
+quantile(unlist(counts_data[,7:ncol(counts_data)]),c(0,0.25,0.5,0.75,1))
+quantile(unlist(counts2),c(0,0.25,0.5,0.75,1))
+```
+
+
+
+### exploratory analysis:series of density plots 
+
+
+```{r  define density plots function}
+
+## plot density plots over 4 replicates
+colnames(counts2)
+library(tidyr)
+library(ggplot2)
+
+density_fig <- function(counts2,cols,xlimits=c(-10,150)){
+  
+  counts2_fig1 = counts2[,cols]
+counts2_fig1 %>% gather(key="replicates", value="counts_normalized", 1:4) ->counts2_fig1_data
+ggplot(counts2_fig1_data, aes(x=counts_normalized, colour=replicates)) +
+              geom_density(alpha=1,size=1)+
+  scale_x_continuous(limits=xlimits)
+  # theme_bw()+
+  # theme(panel.grid=element_blank())
+}
+  
+
+```
+```{r  density plot 1}
+
+density_fig(counts2=counts2,cols=c("A_Y_0_1","A_Y_0_2","a_Y_0_1","a_Y_0_2"))  ##starting time, WT
+```
+```{r density plot 2}
+density_fig(counts2=counts2,cols=c("B_Y_0_1","B_Y_0_2","M_Y_0_1","M_Y_0_2")) ##starting time, del
+```
+
+```{r define density plot function 2}
+density_fig2 <- function(counts2,cols,xlimits=c(-10,200)){
+
+  counts2_fig1 = counts2[,cols]
+counts2_fig1 %>% gather(key="replicates_overtime", value="counts_normalized", 1:12) ->counts2_fig1_data
+ggplot(  counts2_fig1_data, 
+         aes(x=counts_normalized, colour=replicates_overtime)  ) +
+         geom_density(alpha=1,size=1)+
+  scale_x_continuous(limits=xlimits)
+  # theme_bw()+
+  # theme(panel.grid=element_blank())
+}
+
+```
+
+
+
+```{r density plot(overtime groups) 1}
+
+
+density_fig2(counts2=counts2,cols=c(
+                                   "A_R_30_1","A_R_30_2","a_R_30_1","a_R_30_2",
+                                   "A_R_120_1","A_R_120_2","a_R_120_1","a_R_120_2",
+                                   "A_R_240_1","A_R_240_2","a_R_240_1","a_R_240_2"
+
+                                   ))
+
+
+```
+
+```{r density plot(overtime groups) 2}
+density_fig2(counts2=counts2,cols=c(
+                                   "A_RS_30_1","A_RS_30_2","a_RS_30_1","a_RS_30_2",
+                                   "A_RS_120_1","A_RS_120_2","a_RS_120_1","a_RS_120_2",
+                                   "A_RS_240_1","A_RS_240_2","a_RS_240_1","a_RS_240_2"
+
+                                   ))
+```
+
+```{r density plot(overtime groups) 3}
+density_fig2(counts2=counts2,cols=c(
+                                   "B_R_30_1","B_R_30_2","M_R_30_1","M_R_30_2",
+                                   "B_R_120_1","B_R_120_2","M_R_120_1","M_R_120_2",
+                                   "B_R_240_1","B_R_240_2","M_R_240_1","M_R_240_2"
+
+                                   ))
+```
+
+```{r density plot(overtime groups) 4}
+density_fig2(counts2=counts2,cols=c(
+                                   "B_RS_30_1","B_RS_30_2","M_RS_30_1","M_RS_30_2",
+                                   "B_RS_120_1","B_RS_120_2","M_RS_120_1","M_RS_120_2",
+                                   "B_RS_240_1","B_RS_240_2","M_RS_240_1","M_RS_240_2"
+
+                                   ))
+```
+
+
+### exploratory analysis:PCA reduce dimension 
+
+```{r  PCA: reduce dimension and scree plots}
+
+pca = prcomp(t(counts2),scale=TRUE)
+pca.var = pca$sdev^2
+pca.var.per = round(pca.var/sum(pca.var)*100,1)
+
+#scree plots
+qplot(c(1:20), pca.var.per[1:20]) +
+  geom_line() +
+  geom_point(size=4)+
+  xlab("Principal Component") +
+  ylab("Variance Explained(%)") +
+  ylim(0, 30)
+print(pca.var.per)
+print(cumsum(pca.var.per))
+```
+```{r PCA:PCA plots}
+
+# using First two PCs
+pca.data <- data.frame(Sample=rownames(pca$x),
+                       X=pca$x[,1],
+                       Y=pca$x[,2])# one column with the sample ids# Tow columns for the X and Y coordinates for each sample
+
+ggplot(data=pca.data[1:28,], aes(x=X, y=Y))+
+  # geom_point()+
+  geom_text(aes(label=Sample),size=3,angle=20) +
+  xlab(paste("PC1 - ", pca.var.per[1], "%", sep=""))+
+  ylab(paste("PC2 - ", pca.var.per[2], "%", sep=""))
+  # theme_bw()+
+  # theme(panel.grid=element_blank())
+
+
+ggplot(data=pca.data[29:56,], aes(x=X, y=Y))+
+  geom_text(aes(label=Sample),size=3,angle=20) +
+  xlab(paste("PC1 - ", pca.var.per[1], "%", sep=""))+
+  ylab(paste("PC2 - ", pca.var.per[2], "%", sep=""))
+  # theme_bw()+
+  # theme(panel.grid=element_blank())
+```
+
+
+#### exploratory analysis:clustering 
+
+```{r cluster(first 5 principle components)}
+
+d <- dist(pca$x[,c(1:5)])
+fitH <- hclust(d, "ward.D2")
+# out.hclust=hclust(out.dist,method="complete")
+plot(fitH,cex=0.5)
+
+```
+
+
+
+
+### exploratory analysis:  Kruskal–Wallis test
+
+
+```{r Kruskal–Wallis test (after PCA)}
+
+
+kruskal.test(as.data.frame(t(pca$x[c("A_Y_0_1","A_Y_0_2","a_Y_0_1","a_Y_0_2"),])))
+kruskal.test(as.data.frame(t(pca$x[c("B_Y_0_1","B_Y_0_2","M_Y_0_1","M_Y_0_2"),])))
+kruskal.test(as.data.frame(t(pca$x[c("A_R_30_1","A_R_30_2","a_R_30_1","a_R_30_2"),])))
+kruskal.test(as.data.frame(t(pca$x[c("B_R_30_1","B_R_30_2","M_R_30_1","M_R_30_2"),])))
+kruskal.test(as.data.frame(t(pca$x[c("A_R_120_1","A_R_120_2","a_R_120_1","a_R_120_2"),])))
+kruskal.test(as.data.frame(t(pca$x[c("B_R_120_1","B_R_120_2","M_R_120_1","M_R_120_2"),])))
+kruskal.test(as.data.frame(t(pca$x[c("A_R_240_1","A_R_240_2","a_R_240_1","a_R_240_2"),])))
+kruskal.test(as.data.frame(t(pca$x[c("B_R_240_1","B_R_240_2","M_R_240_1","M_R_240_2"),])))
+kruskal.test(as.data.frame(t(pca$x[c("A_RS_30_1","A_RS_30_2","a_RS_30_1","a_RS_30_2"),])))
+kruskal.test(as.data.frame(t(pca$x[c("B_RS_30_1","B_RS_30_2","M_RS_30_1","M_RS_30_2"),])))
+kruskal.test(as.data.frame(t(pca$x[c("A_RS_120_1","A_RS_120_2","a_RS_120_1","a_RS_120_2"),])))
+kruskal.test(as.data.frame(t(pca$x[c("B_RS_120_1","B_RS_120_2","M_RS_120_1","M_RS_120_2"),])))
+kruskal.test(as.data.frame(t(pca$x[c("A_RS_240_1","A_RS_240_2","a_RS_240_1","a_RS_240_2"),])))
+kruskal.test(as.data.frame(t(pca$x[c("B_RS_240_1","B_RS_240_2","M_RS_240_1","M_RS_240_2"),])))
+
+```
+
+
+```{r  save data,eval=FALSE}
+
+ 
+Geneid = counts_sub$Geneid
+mer2_data_sub = mer2_data[mer2_data$Gene %in% Geneid,]
+mer3_data_sub = mer3_data[mer3_data$Gene %in% Geneid,]
+mer4_data_sub = mer4_data[mer4_data$Gene %in% Geneid,]
+mer5_data_sub = mer5_data[mer5_data$Gene %in% Geneid,]
+
+
+counts2_data = cbind(counts_sub[,1:6],counts2)
+counts2_data = counts2_data[counts2_data$Geneid %in% mer2_data_sub$Gene,]
+
+write.csv(counts2_data,file="counts2_all.csv",row.names=FALSE)
+
+write.csv(mer2_data_sub,"mer2_data_sub.csv",row.names=FALSE)
+write.csv(mer3_data_sub,"mer3_data_sub.csv",row.names=FALSE)
+write.csv(mer4_data_sub,"mer4_data_sub.csv",row.names=FALSE)
+write.csv(mer5_data_sub,"mer5_data_sub.csv",row.names=FALSE)
+
+```
+
+
+
+
